@@ -1,0 +1,3 @@
+# Go Proxy Autostart - Autostart container on incoming the fly
+
+Go Proxy Autorstart is a go program that act like a reverse proxy, and start a given container when the proxy receive a connection. This project was initially designed to work with [itzg/minecraft-server](https://hub.docker.com/r/itzg/minecraft-server), in order to automatically start the server on incoming connection, while the server itself self shutdown after a timeout.
