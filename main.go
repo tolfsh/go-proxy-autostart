@@ -1,19 +1,16 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net"
+	"os"
 	"sync"
 	"time"
 
 	mapset "github.com/deckarep/golang-set/v2"
-)
-
-const (
-	server_ip     = "127.0.0.1"
-	server_port   = "25565"
-	servicePort   = "25566"
-	containerName = "minecraft"
+	dockerTypes "github.com/docker/docker/api/types"
+	docker "github.com/docker/docker/client"
 )
 
 var (
@@ -21,15 +18,22 @@ var (
 	errorLogger      = log.New(log.Writer(), "[ERROR]", log.Ldate|log.Ltime)
 	containerStarted = true
 	clients          mapset.Set[*net.Conn]
+	server_ip        string
+	server_port      string
+	containerName    string
+	servicePort      string
 )
 
 func main() {
+	getEnvParam()
 	clients = mapset.NewSet[*net.Conn]()
-	listener, err := net.Listen("tcp", net.JoinHostPort(server_ip, server_port))
+	listenAddress := net.JoinHostPort(server_ip, server_port)
+	listener, err := net.Listen("tcp", listenAddress)
 	go monitorContainer(containerName)
 	if err != nil {
 		errorLogger.Fatalf("Cannot open listener: %s", err.Error())
 	}
+	infoLogger.Printf("Accepting connections on %s", listenAddress)
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -38,20 +42,61 @@ func main() {
 		if containerStarted {
 			go handleConnection(conn)
 		} else {
-			startContainer()
+			err := startContainer(containerName)
+			if err != nil {
+				errorLogger.Printf("Cannot start %s: %s", containerName, err.Error())
+			}
 		}
 	}
 }
 
-func startContainer() {
-	infoLogger.Printf("Container %s has been started", containerName)
-	// TODO add real implémtentation
+func getEnvParam() {
+	server_ip = os.Getenv("LISTEN_IP")
+	if server_ip == "" {
+		server_ip = "0.0.0.0"
+	}
+	server_port = os.Getenv("LISTEN_PORT")
+	if server_port == "" {
+		server_port = "25565"
+	}
+	containerName = os.Getenv("CONTAINER_NAME")
+	if containerName == "" {
+		errorLogger.Fatalf("CONTAINER_NAME is mandatory")
+	}
+	servicePort = os.Getenv("SERVICE_PORT")
+	if servicePort == "" {
+		servicePort = "25565"
+	}
 }
 
-func monitorContainer(containerName string) bool {
-	containerStarted = true
-	return true
-	//TODO add real implémentation
+func startContainer(containerName string) error {
+	cli, err := docker.NewClientWithOpts(docker.FromEnv, docker.WithAPIVersionNegotiation())
+	if err != nil {
+		return err
+	}
+	defer cli.Close()
+	cli.ContainerStart(context.Background(), containerName, dockerTypes.ContainerStartOptions{})
+	return nil
+}
+
+func monitorContainer(containerName string) {
+	cli, err := docker.NewClientWithOpts(docker.FromEnv, docker.WithAPIVersionNegotiation())
+	if err != nil {
+		errorLogger.Panicf("Cannot create Docker client: %s", err.Error())
+	}
+	defer cli.Close()
+	for {
+		resp, err := cli.ContainerInspect(context.Background(), containerName)
+		if err != nil {
+			errorLogger.Panicf("Cannot get container state: %s", err.Error())
+		}
+		if resp.State.Running {
+			containerStarted = true
+		} else {
+			containerStarted = false
+		}
+		time.Sleep(time.Second * 5)
+	}
 }
 
 func handleConnection(clientConn net.Conn) {
@@ -59,7 +104,6 @@ func handleConnection(clientConn net.Conn) {
 	defer func() {
 		clients.Remove(&clientConn)
 	}()
-
 	clients.Add(&clientConn)
 
 	infoLogger.Printf("New Connection from %s", clientConn.RemoteAddr())
@@ -71,18 +115,26 @@ func handleConnection(clientConn net.Conn) {
 
 	var waitGroup sync.WaitGroup
 	waitGroup.Add(2)
-	go func() {
-		defer waitGroup.Done()
-		go readAndTransfer(&clientConn, &serviceConn)
-		go readAndTransfer(&serviceConn, &clientConn)
-	}()
+
+	go readAndTransfer(clientConn, serviceConn, &waitGroup)
+	go readAndTransfer(serviceConn, clientConn, &waitGroup)
 
 	waitGroup.Wait()
 }
 
-func readAndTransfer(src *net.Conn, dst *net.Conn) {
+func readAndTransfer(src net.Conn, dst net.Conn, wait *sync.WaitGroup) {
+	defer dst.Close()
+	defer wait.Done()
 	for {
-		var buf [8192]byte
+		buf := make([]byte, 8192)
 		count, err := src.Read(buf)
+		if err != nil {
+			errorLogger.Printf("Error: %s", err.Error())
+		}
+		if count != 0 {
+			dst.Write(buf)
+		} else {
+			return
+		}
 	}
 }
