@@ -11,4 +11,4 @@ RUN go build -v -o /app ./...
 FROM scratch
 COPY --from=build /app .
 
-CMD ["app"]
+CMD ["/app"]
