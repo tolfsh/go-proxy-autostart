@@ -160,7 +160,7 @@ func readAndTransfer(src net.Conn, dst net.Conn, wait *sync.WaitGroup) {
 			errorLogger.Printf("Error: %s", err.Error())
 		}
 		if count != 0 {
-			dst.Write(buf)
+			dst.Write(buf[:count])
 		} else {
 			return
 		}
