@@ -34,6 +34,7 @@ services:
     ports:
       - 25565:25565 
 ```
+The image is available on the [dockerhub](https://hub.docker.com/repository/docker/tolfsh/go-proxy-autostart)
 
 # Disclaimer
 
