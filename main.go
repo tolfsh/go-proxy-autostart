@@ -7,6 +7,7 @@ import (
 	"os"
 	"sync"
 	"time"
+	"io"
 
 	mapset "github.com/deckarep/golang-set/v2"
 	dockerTypes "github.com/docker/docker/api/types"
@@ -113,9 +114,9 @@ func monitorContainer(containerName string) {
 }
 
 func handleConnection(clientConn net.Conn) {
-	defer clientConn.Close()
 	defer func() {
 		clients.Remove(&clientConn)
+		infoLogger.Printf("Client %s left", clientConn.RemoteAddr())
 	}()
 	clients.Add(&clientConn)
 	
