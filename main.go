@@ -2,12 +2,12 @@ package main
 
 import (
 	"context"
+	"io"
 	"log"
 	"net"
 	"os"
 	"sync"
 	"time"
-	"io"
 
 	mapset "github.com/deckarep/golang-set/v2"
 	dockerTypes "github.com/docker/docker/api/types"
@@ -15,16 +15,16 @@ import (
 )
 
 var (
-	infoLogger       = log.New(log.Writer(), "[INFO] ", log.Ldate|log.Ltime)
-	errorLogger      = log.New(log.Writer(), "[ERROR] ", log.Ldate|log.Ltime)
-	containerReady = true
-	containerHealth  string
-	containerState	 string
-	clients          mapset.Set[*net.Conn]
-	server_ip        string
-	server_port      string
-	containerName    string
-	servicePort      string
+	infoLogger      = log.New(log.Writer(), "[INFO] ", log.Ldate|log.Ltime)
+	errorLogger     = log.New(log.Writer(), "[ERROR] ", log.Ldate|log.Ltime)
+	containerReady  = true
+	containerHealth string
+	containerState  string
+	clients         mapset.Set[*net.Conn]
+	server_ip       string
+	server_port     string
+	containerName   string
+	servicePort     string
 )
 
 func main() {
@@ -107,7 +107,8 @@ func monitorContainer(containerName string) {
 			}
 		}
 		if resp.State.Status != containerState {
-			infoLogger.Printf("")
+			containerState = resp.State.Status
+			infoLogger.Printf("Container %s is %s", containerName, containerState)
 		}
 		time.Sleep(time.Second * 5)
 	}
@@ -119,10 +120,10 @@ func handleConnection(clientConn net.Conn) {
 		infoLogger.Printf("Client %s left", clientConn.RemoteAddr())
 	}()
 	clients.Add(&clientConn)
-	
+
 	if !containerReady {
 		infoLogger.Printf("Waiting for container %s to be ready", containerName)
-		for i := 0; i<30; i++ {
+		for i := 0; i < 30; i++ {
 			if containerReady {
 				break
 			}
@@ -139,7 +140,7 @@ func handleConnection(clientConn net.Conn) {
 	if err != nil {
 		errorLogger.Printf("Cannot connect to %s", serviceConnectionString)
 	}
-	
+
 	var waitGroup sync.WaitGroup
 	waitGroup.Add(2)
 
