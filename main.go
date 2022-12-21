@@ -14,9 +14,11 @@ import (
 )
 
 var (
-	infoLogger       = log.New(log.Writer(), "[INFO]", log.Ldate|log.Ltime)
-	errorLogger      = log.New(log.Writer(), "[ERROR]", log.Ldate|log.Ltime)
-	containerStarted = true
+	infoLogger       = log.New(log.Writer(), "[INFO] ", log.Ldate|log.Ltime)
+	errorLogger      = log.New(log.Writer(), "[ERROR] ", log.Ldate|log.Ltime)
+	containerReady = true
+	containerHealth  string
+	containerState	 string
 	clients          mapset.Set[*net.Conn]
 	server_ip        string
 	server_port      string
@@ -39,12 +41,15 @@ func main() {
 		if err != nil {
 			errorLogger.Fatalf("Cannot open listener: %s", err.Error())
 		}
-		if containerStarted {
+		infoLogger.Printf("New Connection from %s", conn.RemoteAddr())
+		if containerReady {
 			go handleConnection(conn)
 		} else {
 			err := startContainer(containerName)
 			if err != nil {
 				errorLogger.Printf("Cannot start %s: %s", containerName, err.Error())
+			} else {
+				go handleConnection(conn)
 			}
 		}
 	}
@@ -75,6 +80,7 @@ func startContainer(containerName string) error {
 		return err
 	}
 	defer cli.Close()
+	infoLogger.Printf("Starting container %s", containerName)
 	cli.ContainerStart(context.Background(), containerName, dockerTypes.ContainerStartOptions{})
 	return nil
 }
@@ -90,10 +96,17 @@ func monitorContainer(containerName string) {
 		if err != nil {
 			errorLogger.Panicf("Cannot get container state: %s", err.Error())
 		}
-		if resp.State.Running {
-			containerStarted = true
-		} else {
-			containerStarted = false
+		if resp.State.Health.Status != containerHealth {
+			infoLogger.Printf("Container %s is %s", containerName, resp.State.Health.Status)
+			containerHealth = resp.State.Health.Status
+			if resp.State.Health.Status == "healthy" {
+				containerReady = true
+			} else {
+				containerReady = false
+			}
+		}
+		if resp.State.Status != containerState {
+			infoLogger.Printf("")
 		}
 		time.Sleep(time.Second * 5)
 	}
@@ -105,14 +118,27 @@ func handleConnection(clientConn net.Conn) {
 		clients.Remove(&clientConn)
 	}()
 	clients.Add(&clientConn)
+	
+	if !containerReady {
+		infoLogger.Printf("Waiting for container %s to be ready", containerName)
+		for i := 0; i<30; i++ {
+			if containerReady {
+				break
+			}
+			time.Sleep(time.Second)
+		}
+		if !containerReady {
+			errorLogger.Printf("Container %s has not started in 30s. Aborting", containerName)
+			return
+		}
+	}
 
-	infoLogger.Printf("New Connection from %s", clientConn.RemoteAddr())
 	serviceConnectionString := net.JoinHostPort(containerName, servicePort)
 	serviceConn, err := net.DialTimeout("tcp", serviceConnectionString, time.Second*10)
 	if err != nil {
-		errorLogger.Panicf("Cannot connect to %s", serviceConnectionString)
+		errorLogger.Printf("Cannot connect to %s", serviceConnectionString)
 	}
-
+	
 	var waitGroup sync.WaitGroup
 	waitGroup.Add(2)
 
@@ -128,7 +154,7 @@ func readAndTransfer(src net.Conn, dst net.Conn, wait *sync.WaitGroup) {
 	for {
 		buf := make([]byte, 8192)
 		count, err := src.Read(buf)
-		if err != nil {
+		if err != nil && err != io.EOF {
 			errorLogger.Printf("Error: %s", err.Error())
 		}
 		if count != 0 {

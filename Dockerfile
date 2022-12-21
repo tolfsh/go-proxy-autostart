@@ -8,7 +8,7 @@ RUN go mod download && go mod verify
 COPY . .
 RUN go build -v -o /app ./...
 
-FROM bosybox
+FROM busybox
 COPY --from=build /app .
 
 CMD ["/app"]
